@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+message TpfyFeatureVector {
+  repeated int64 fids = 1;
+  repeated int64 weighted_fids = 2;
+  repeated float fid_weights = 3;
+
+  repeated int32 sparse_indices = 4;
+  repeated float sparse_values = 5;
+}
+
+message Watch {
+  string content_id = 1;
+  int32 language_id = 2;
+  int64 timestamp = 3;
+  int64 first_timestamp = 4;
+  int32 watch_time = 5;
+}
+
+message InstalledApp {
+  string package_name = 1;
+  string name = 2;
+}
+
+message RawFeature {
+  repeated Watch ent_watches = 1;
+  repeated float ent_watch_weights = 2;
+  map<string, float> lpv = 3;
+  repeated InstalledApp installed_apps = 4;
+
+  map<int32, bytes> serialized_features = 99;
+}
+
+message TpfyPredictPayload {
+  TpfyFeatureVector user_feature = 1;
+  RawFeature raw_feature = 2;
+  bool cms3 = 3;
+}
+
+message TpfyPredictEvent {
+  string country = 1;
+  string dw_p_id = 2;
+  int64 timestamp = 3;
+  string platform = 4;
+
+  // 5 reserved
+  string page_id = 6;
+  repeated string subscription_types = 7;
+  map<string, string> ab_groups = 8;
+
+  int32 tpfy_request_type = 9;
+
+  bytes payload = 10; // deserialize on demand
+  string debug_info = 11;
+  int64 flags = 12;
+}

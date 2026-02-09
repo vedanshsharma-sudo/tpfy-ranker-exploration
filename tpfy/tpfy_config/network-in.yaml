@@ -1,0 +1,39 @@
+
+data:
+    test_count: 100
+    eval_count: 500
+    eval_count_impr: 500
+    eval_count_impr_newitem: 0
+    eval_count_final: 50000
+    train_neg_samples: 15
+    eval_neg_samples: 15
+    watch_len_thres: 600
+    clip_len_ratio: 0.5
+    clip_len_thres: 30
+    eval_file_index: 5
+
+model:
+    dim : 32
+    embedding_l2: 0.0
+    middle_dim: 128
+    dnn_units: [256]
+    dnn_activation: relu
+    dnn_l2: 0.0
+    weight_decay: 1e-6
+
+train:
+    init_method: xavier_uniform  # xavier_uniform  # tnormal
+    init_value : 0.01
+    dropout : [0.0, 0.0]
+    learning_rate : 0.001
+
+    train_repeat: 20
+    train_prefetch: 20000
+    train_shuffle: 20000
+    batch_size: 256
+
+info:
+    eval_freq: 10
+    save_freq: 10
+    step_unit: 1000
+    max_step: 400
