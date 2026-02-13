@@ -418,7 +418,7 @@ def run():
     run = 0
     while True:
         try:
-            if (run % 10 == 0) and (run):
+            if (run % 100 == 0) and (run):
                 # Find the training loss for the current batch
                 A, b, mse_value = compute_A_b_tf(A, b, next_batch, tpfy_model, compress_output_tensor, logging=True)
 
