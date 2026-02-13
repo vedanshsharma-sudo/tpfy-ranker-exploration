@@ -1,0 +1,11 @@
+FROM 084690408984.dkr.ecr.us-east-1.amazonaws.com/p13n/reco-offline-predictor:base
+ADD . /app
+WORKDIR /app
+ENTRYPOINT sh -c "\
+    export PYTHONPATH=/app && \
+    export PYTHONIOENCODING=utf-8 && \
+    export PYTHONUNBUFFERED=0 && \
+    python -m tpfy.distribute_train local ${MODEL_NAME} ${DATE_STR} ${EXTRA_PARAMS} \
+      --model_base_dir dist_tmp/model --log_base_dir dist_tmp/model \
+      --worker_inter 1 --worker_intra 1 \
+      --upload"

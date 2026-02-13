@@ -1,0 +1,29 @@
+# omegaconf
+
+model:
+    dim : 8
+    embedding_l2: 0.0
+    dnn_l2: 0.0
+    middle_dim: 128
+    dnn_units: [256]
+    dnn_activation: relu
+    init_method: xavier_uniform
+    init_value: 0.01
+    multi_country: true
+
+    enable_discover_popularity: false
+    enable_hp_feature: false
+
+train:
+    eval_freq: 0
+    eval_steps: 500
+    batch_size: 512
+    step_unit: 500
+    max_step: 1000
+    learning_rate: 0.0002
+    lr_decay: false
+    lr_decay_start: 5
+    min_lr: 0.0001
+    weight_decay: 1e-6
+
+    enable_random_watch: true

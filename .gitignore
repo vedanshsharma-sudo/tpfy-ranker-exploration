@@ -1,0 +1,6 @@
+progressive_matrices
+.ipynb_checkpoints
+*.lockfile
+*.tempstate*
+__pycache__
+tpfy/neural_linUCB_*

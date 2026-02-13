@@ -1,0 +1,7 @@
+FROM tensorflow/tensorflow:2.2.0
+WORKDIR /app
+ADD tpfy/cum_watch/requirements.txt /app
+
+RUN apt-get update && apt-get install -y python3.7 libsasl2-modules libsasl2-dev
+RUN python3.7 -m pip install --upgrade pip && python3.7 -m pip install -r requirements.txt && python3 -m pip freeze
+ENTRYPOINT sh
