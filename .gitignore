@@ -1,3 +1,5 @@
+*.csv
+disjoint_neural_linucb/
 progressive_matrices
 .ipynb_checkpoints
 *.lockfile
