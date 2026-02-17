@@ -96,18 +96,25 @@ def load_and_compile_model():
     return model
 
 def get_activations_and_labels(next_batch, last_layer_tensor):
-    features, labels, metadata = session.run(next_batch)
+    features, labels, metadata = next_batch
     
-    activation_values = session.run(
-        last_layer_tensor,
-        feed_dict={} if not features else None  
+    # activation_values = session.run(
+    #     last_layer_tensor,
+    #     feed_dict={} if not features else None  
+    # )
+    
+    features_val, labels_val, metadata_val, activation_val = session.run(
+        [features, labels, metadata, last_layer_tensor]
     )
+
+    # next_batch_data = (features_val, labels_val, metadata_val, activation_val)
     
-    return activation_values, labels, metadata
+    return activation_val, labels_val, metadata_val
+    # return activation_values, labels, metadata
 
 def compute_A(A, next_batch, last_layer_tensor):
     activation_values, labels, metadata = get_activations_and_labels(next_batch, last_layer_tensor)
-    print(activation_values[0])
+    # print(activation_values[0])
     y_batch = labels['click']
     mask = (y_batch != -1)
 
@@ -130,8 +137,23 @@ def run(args):
     next_batch = iterator.get_next()
     sample_features, sample_labels, sample_metadata = session.run(next_batch)
     tpfy_model = load_and_compile_model()
+    
+    # Build the graph - similar to trainer.py lines 366-375
+    with tfv1.name_scope("linucb_training"):
+        iterator = tf_dataset.make_one_shot_iterator()
+        next_batch = iterator.get_next()
 
-    prediction = tpfy_model(sample_features, training=False)
+        # Unpack - this creates tensor placeholders
+        if len(next_batch) == 3:
+            x, y_true, metadata = next_batch
+        else:
+            x, y_true = next_batch
+            metadata = None
+
+        # Call model with TENSOR x (not numpy data) - this builds the forward pass in the graph
+        y_pred = tpfy_model(x, training=False)
+    
+    # prediction = tpfy_model(sample_features, training=False)
     session.run([
         tfv1.global_variables_initializer(),
         tfv1.local_variables_initializer(),
@@ -143,7 +165,7 @@ def run(args):
         use_s3=True,
         checkpoint_name=args.checkpoint
     )
-    plain_weights_modified = {k.replace('train/', ''): v for k, v in plain_weights.items()}
+    plain_weights_modified = {k.replace('train/', 'linucb_training/'): v for k, v in plain_weights.items()}
     restore_ops = tpfy_model.restore_plain_weights_ops(
         plain_weights_modified,
         clear_nn=args.clear_nn
@@ -151,12 +173,12 @@ def run(args):
     session.run(restore_ops)
 
     # Create NEW iterator (reset to start of dataset)
-    iterator = tf_dataset.make_one_shot_iterator()
-    next_batch = iterator.get_next()
+    # iterator = tf_dataset.make_one_shot_iterator()
+    # next_batch = iterator.get_next()
 
     # Get compress_output tensor (linear_input)
     graph = tf.compat.v1.get_default_graph()
-    compress_output_tensor = graph.get_tensor_by_name(f'tpfy_model_v3/deepfm/{args.layer_name}:0')
+    compress_output_tensor = graph.get_tensor_by_name(f'linucb_training/tpfy_model_v3/deepfm/{args.layer_name}:0')
 
     #train feature matrix
     # lambda_=1.0

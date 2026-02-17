@@ -1,3 +1,5 @@
+# python 6_2-disjoint_NeuralLinUCB_eval.py tpfy-v3-mtl-r2 2026-02-09 --checkpoint 1770723470 --validation_run 600 --matrix_checkpoint 39000
+
 import os
 os.environ['ENV'] = 'prod'
 os.environ['REGION'] = 'apse1'

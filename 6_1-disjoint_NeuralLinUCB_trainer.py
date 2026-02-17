@@ -1,3 +1,4 @@
+# python3.7 -m 6_1-disjoint_NeuralLinUCB_trainer.py tpfy-v3-mtl-r2 2026-02-09 --checkpoint 1770723470
 import os
 os.environ['ENV'] = 'prod'
 os.environ['REGION'] = 'apse1'
@@ -198,14 +199,26 @@ def run(args):
             print(f'Length of arm index : {len(arm_index)}')
             print(f'Run {run_} completed in {time.time() - start} s!')
             start = time.time()
+            
         if (run_ % 1000 == 0) and (run_):
             np.save(f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/A_{run_}.npy', A)
             np.save(f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/b_{run_}.npy', b)
             with open(f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/arm_index_{run_}.pkl', 'wb') as handle:
                 pickle.dump(arm_index, handle)
+                
+            files = [
+                f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/A_{run_-1000}.npy',
+                f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/b_{run_-1000}.npy',
+                f'disjoint_neural_linucb/disjoined_neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/arm_index_{run_-1000}.pkl'
+            ]
+            for f in files:
+                if os.path.exists(f):
+                    os.remove(f)
+
             gc.collect()
             print(f'Run {run_} completed in {time.time() - start} s!')
             start = time.time()
+            
         try:
             A, b, arm_index = compute_A_b(A, b, arm_index, next_batch, compress_output_tensor)
         except tf.errors.OutOfRangeError:

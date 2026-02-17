@@ -50,3 +50,5 @@ class TpfyDataPath:
     )
 
     S3_TPFY_MODEL_EXPORT = "tpfy/%s"
+    
+    S3_TPFY_NEURAL_LINUCB_MATRICES = "tpfy/tpfy-v3-neural-linucb"

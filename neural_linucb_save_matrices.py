@@ -1,3 +1,4 @@
+# python3.7 -m 6_1-disjoint_NeuralLinUCB_trainer.py tpfy-v3-mtl-r2 2026-02-09 --checkpoint 1770723470
 import os
 os.environ['ENV'] = 'prod'
 os.environ['REGION'] = 'apse1'
@@ -9,13 +10,9 @@ os.environ['USE_REAL_CMS3']= "True"
 os.environ['RECO_CREDENTIAL']= "-----BEGINRSAPRIVATEKEY-----\nMGICAQACEQCdHOlGnxIMWCMzjK2JAg37AgMBAAECEGOIwGTEO9vd3X9+jyiF4NECCQnoqDakDgSm2QIID9sadWN0XvMCCQLiqPkgVKSuIQIIDCAsWM+pJB8CCQG0jbIGCNX9MA==\n-----ENDRSAPRIVATEKEY-----"
 
 import argparse, gc
-import json
 import os, time
 import numpy as np
-import s3fs
-import pyarrow
 import tensorflow as tf
-from tqdm import tqdm
 
 tfv1 = tf.compat.v1
 tfv1.disable_v2_behavior()
@@ -33,28 +30,13 @@ from model.metrics import MaskedAUC
 
 from common.config.utils import data_path, model_path
 from common.config import TENANT
-from tpfy.tf_model.tpfy_model_v3_mtl import TpfyModelV3, TpfyMtlModelConfig
-from tpfy.etl.schema import TpfyMtlDatasetSchema
-from model.parquet_dataset import TFParquetDataset
-from tpfy.common import TpfyDataPath
+from tpfy.tf_model.tpfy_model_v3_mtl import TpfyModelV3
 from omegaconf import OmegaConf
-from dataclasses import dataclass
-from tpfy.train_v3_mtl import make_example_mtl, TpfyTrainConfig, TpfyConfig
-from tpfy.helper import load_model_weights_from_s3
+from tpfy.train_v3_mtl import TpfyConfig
+from tpfy.helper import load_model_weights_from_s3, create_dataset, save_matrices
+from common.s3_utils import upload_folder
 
-def create_dataset(date, path = None):
-    if path:
-        data_path_str = path
-    else:
-        data_path_str = data_path(
-            TpfyDataPath.S3_TPFY_IMPR_V3_DAILY_MTL_EXTRACTED_EXAMPLES, TENANT
-        ) % (variant, date)
-
-    dataset = TFParquetDataset([data_path_str], TpfyMtlDatasetSchema, shuffle_files=True)
-    tf_dataset = dataset.create_tf_dataset(batch_size).map(make_example_mtl)
-    return tf_dataset
-
-def load_and_compile_model():
+def load_and_compile_model(args, hparams):
     # Build model
     print(f"\n{'='*80}")
     print("BUILDING MODEL")
@@ -95,43 +77,46 @@ def load_and_compile_model():
     
     return model
 
-def get_activations_and_labels(next_batch, last_layer_tensor):
-    features, labels, metadata = session.run(next_batch)
+def compute_A_b(A, b, next_batch, last_layer_tensor, session):
+    features, labels, _ = session.run(next_batch)
     
     activation_values = session.run(
         last_layer_tensor,
         feed_dict={} if not features else None  
     )
-    
-    return activation_values, labels, metadata
-
-def compute_A(A, next_batch, last_layer_tensor):
-    activation_values, labels, metadata = get_activations_and_labels(next_batch, last_layer_tensor)
-    print(activation_values[0])
     y_batch = labels['click']
     mask = (y_batch != -1)
 
     if not np.any(mask):
-        del activation_values, labels, metadata, mask
-        return A
+        del activation_values, labels, mask
+        return A, b
 
     H = activation_values[mask.squeeze()].copy() 
+    y_batch = y_batch[mask].reshape(sum(mask)[0], )
+    
     del activation_values, mask  # Delete immediately
     
     H = H / (np.linalg.norm(H, axis=1, keepdims=True) + 1e-8)
     A += H.T @ H
+    b += H.T @ y_batch
 
-    del H, labels, metadata 
-    return A
+    del H, labels, y_batch
+    return A, b
 
-def run(args):
-    tf_dataset = create_dataset(args.date)
+def run(args, session, hparams):
+    variant = args.variant
+    if variant and not variant.startswith("-"):
+        variant = "-" + variant
+    
+    batch_size = args.batch_size or hparams.train.batch_size
+    
+    tf_dataset = create_dataset(args.date, variant=variant, batch_size=batch_size)
     iterator = tf_dataset.make_one_shot_iterator()
     next_batch = iterator.get_next()
-    sample_features, sample_labels, sample_metadata = session.run(next_batch)
-    tpfy_model = load_and_compile_model()
+    sample_features, _, _ = session.run(next_batch)
+    tpfy_model = load_and_compile_model(args=args, hparams=hparams)
 
-    prediction = tpfy_model(sample_features, training=False)
+    _ = tpfy_model(sample_features, training=False)
     session.run([
         tfv1.global_variables_initializer(),
         tfv1.local_variables_initializer(),
@@ -157,65 +142,93 @@ def run(args):
     # Get compress_output tensor (linear_input)
     graph = tf.compat.v1.get_default_graph()
     compress_output_tensor = graph.get_tensor_by_name(f'tpfy_model_v3/deepfm/{args.layer_name}:0')
-
-    #train feature matrix
-    # lambda_=1.0
-    d=128
-    # A = lambda_ * np.eye(d, dtype=np.float64)
-    A = np.zeros((d,d), dtype=np.float64)
+    
+    d = hparams.model.middle_dim
+    lambda_ = args.lambda_reg
+    A = lambda_ * np.eye(d, dtype=np.float32)
+    b = np.zeros((d,), dtype=np.float32)
+    base_path = f'export/neural_linUCB_offline_matrices_{args.date}'
+    
+    # S3 path (only if upload is enabled)
+    # s3_base_path = model_path(
+    # f"tpfy/tpfy-v3-neural-linucb/{args.date}",
+    # TENANT
+    # )
+    
+    s3_base_path = 's3://p13n-reco-offline-prod/upload_objects/test_vedansh/'
 
     start = time.time()
     run_ = 0
-    os.makedirs(f'tpfy/neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}', exist_ok=True)
+    os.makedirs(base_path, exist_ok=True)
     while True:
-        if (run_ % 100 == 0) and (run_):
-            np.save(f'tpfy/neural_linUCB_offline_matrices_{args.date}_{args.checkpoint}/A_{run_}.npy', A)
+        if (run_ % args.logging_steps == 0) and (run_):
+            save_matrices(base_path, A, b)
+
+            # Upload entire folder to S3 if enabled
+            if args.upload:
+                upload_folder(s3_base_path, base_path, set_acl=False)
+                print(f"Uploaded folder to S3: {s3_base_path}")
+
             gc.collect()
             print(f'Run {run_} completed in {time.time() - start} s!')
             start = time.time()
+            
         try:
-            A = compute_A(A, next_batch, compress_output_tensor)
-        except tf.errors.OutOfRangeError:
-            print("End of dataset reached")
+            A, b = compute_A_b(A, b, next_batch, compress_output_tensor, session=session)
+        except Exception as e:
+            print(f"Ended due to exception : {e}")
+            # Final save to local
+            save_matrices(base_path, A, b)
+            
+            # Final upload entire folder to S3
+            if args.upload:
+                upload_folder(s3_base_path, base_path, set_acl=False)
+                print(f"Final upload to S3: {s3_base_path}")
             break
         run_ += 1
-    
-    
-parser = argparse.ArgumentParser(description="TPFY Exploration offline Training.")
-parser.add_argument("model_name", type=str)
-parser.add_argument("date", type=str)
-parser.add_argument("--click_ns", type=float, default=0.08)
-parser.add_argument("--variant", type=str, default="cms3")
-parser.add_argument("--batch_size", type=int, default=512)
-parser.add_argument("--clear_nn", action="store_true", default=False)
-parser.add_argument("--checkpoint", default=None, type=str)
-parser.add_argument("--layer_name", default='Relu', type=str)
+        
+def main():
+    parser = argparse.ArgumentParser(description="TPFY Exploration offline Training.")
+    parser.add_argument("model_name", type=str)
+    parser.add_argument("date", type=str)
+    parser.add_argument("--click_ns", type=float, default=0.08)
+    parser.add_argument("--lambda_reg", type=float, default=1)
+    parser.add_argument("--variant", type=str, default="cms3")
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--clear_nn", action="store_true", default=False)
+    parser.add_argument("--checkpoint", default=None, type=str)
+    parser.add_argument("--layer_name", default='Relu', type=str)
+    parser.add_argument("--upload", action="store_true", help="uploading model to s3")
+    parser.add_argument("--logging_steps", default=1000, type=int)
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-# Load configuration
-config_name = f"tpfy/tpfy_config/mtl-{TENANT}.yaml"
-if not os.path.exists(config_name):
-    raise FileNotFoundError(f"Config file {config_name} not found")
+    # Load configuration
+    config_name = f"tpfy/tpfy_config/mtl-{TENANT}.yaml"
+    if not os.path.exists(config_name):
+        raise FileNotFoundError(f"Config file {config_name} not found")
 
-hparams: TpfyConfig = OmegaConf.merge(
-    OmegaConf.structured(TpfyConfig),
-    OmegaConf.load(config_name),
-)
-print(f"\nLoaded config: {config_name}")
+    hparams: TpfyConfig = OmegaConf.merge(
+        OmegaConf.structured(TpfyConfig),
+        OmegaConf.load(config_name),
+    )
+    print(f"\nLoaded config: {config_name}")
 
-# Override batch size if specified
-if args.batch_size:
-    hparams.train.batch_size = args.batch_size
+    # Override batch size if specified
+    if args.batch_size:
+        hparams.train.batch_size = args.batch_size
 
-batch_size = hparams.train.batch_size
-print(f"Batch size: {batch_size}")
+    batch_size = hparams.train.batch_size
+    print(f"Batch size: {batch_size}")
 
-# Load dataset
-variant = args.variant
-if variant and not variant.startswith("-"):
-    variant = "-" + variant
+    # Load dataset
+    variant = args.variant
+    if variant and not variant.startswith("-"):
+        variant = "-" + variant
 
-session = tfv1.keras.backend.get_session()
-print("Start training")
-run(args)
+    session = tfv1.keras.backend.get_session()
+    print("Start training")
+    run(args, session, hparams)
+
+if __name__ == "__main__":
+    main()

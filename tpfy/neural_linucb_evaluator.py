@@ -1,3 +1,5 @@
+# python3.7 -m tpfy.neural_linucb_evaluator tpfy-v3-mtl-r2 2026-02-09 --checkpoint 1770723470 --validation_run 600
+
 import os
 os.environ['ENV'] = 'prod'
 os.environ['REGION'] = 'apse1'
@@ -207,7 +209,6 @@ parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--clear_nn", action="store_true", default=False)
 parser.add_argument("--checkpoint", default=None, type=str)
 parser.add_argument("--layer_name", default='Relu', type=str)
-parser.add_argument("--matrix_strategy", default='cumulative', type=str)
 parser.add_argument("--validation_run", default=1100, type=int)
 
 args = parser.parse_args()

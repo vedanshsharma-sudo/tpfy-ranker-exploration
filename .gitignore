@@ -1,3 +1,12 @@
+backup\ scripts/
+scripts/
+corrected_validation/
+default_matrices/
+export/
+evaluation_results_corrected.md
+temp/
+test/
+*.parquet
 *.csv
 disjoint_neural_linucb/
 progressive_matrices

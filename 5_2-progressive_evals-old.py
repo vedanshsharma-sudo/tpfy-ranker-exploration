@@ -109,22 +109,22 @@ def load_and_compile_model():
     
     return model
 
-# def get_activations_and_labels(iterator, model, last_layer_tensor):
-#     features, labels, metadata = session.run(iterator)
+def get_activations_and_labels(iterator, model, last_layer_tensor):
+    features, labels, metadata = session.run(iterator)
 
-#     # Run model
-#     predictions = model(features, training=False)
+    # Run model
+    predictions = model(features, training=False)
 
-#     # Execute
-#     pred_values, activation_values = session.run(
-#         [predictions, last_layer_tensor]
-#     )
+    # Execute
+    pred_values, activation_values = session.run(
+        [predictions, last_layer_tensor]
+    )
 
-#     return activation_values, labels, pred_values, metadata
+    return activation_values, labels, pred_values, metadata
 
-def validation(iterator, model, y_pred, last_layer_tensor, weights, d=128, runs=10):
+def validation(iterator, model, last_layer_tensor, d=128, runs=10):
     # Use numpy arrays with preallocated size to avoid dynamic list growth
-    all_predictions = []
+    # all_predictions = []
     all_labels = []
     all_variances = []
     all_content_ids = []
@@ -136,11 +136,7 @@ def validation(iterator, model, y_pred, last_layer_tensor, weights, d=128, runs=
 
     for i in range(runs):
         try:
-            features, labels, metadata_ = iterator
-            # H, y_batch_all_labels, pred_values, metadata = get_activations_and_labels(iterator, model, last_layer_tensor)
-            features, y_batch_all_labels, metadata, pred_values, activation_values = session.run(
-                [features, labels, metadata_, y_pred, last_layer_tensor]
-            )
+            H, y_batch_all_labels, pred_values, metadata = get_activations_and_labels(iterator, model, last_layer_tensor)
             y_batch = y_batch_all_labels['click']
             pred_values = pred_values['click']
 
@@ -148,26 +144,17 @@ def validation(iterator, model, y_pred, last_layer_tensor, weights, d=128, runs=
 
             if not np.any(mask):
                 continue
-            
-            
-            H = activation_values[mask.squeeze()].copy() 
+
+            H = H[mask.squeeze()]
             y_batch = y_batch[mask].reshape(sum(mask)[0], 1)
             pred_values = pred_values[mask].reshape(sum(mask)[0], 1)
-            
-            # target_output = H @ weights['linucb_training/tpfy_model_v3/deepfm/linear/linear_kernel:0'] + weights['linucb_training/tpfy_model_v3/deepfm/mtl_linear/linear_bias:0']
-            # print('Testing weight: ', target_output[:, 0:1] + weights['linucb_training/tpfy_model_v3/click_biases:0'][0] - pred_values)
 
             H = H / (np.linalg.norm(H, axis=1, keepdims=True) + 1e-8)
             variance = np.sqrt(np.diag(H @ A_inv @ H.T))
-            
-            # print('Activations: ', H[0][:100])
-            # print('pred_values: ', pred_values[0])
-            # print('y_batch: ', y_batch[0])
-            
-            mean = H@theta
+            # mean = H@theta
 
             # Append to lists (will concatenate once at the end)
-            all_predictions.append(mean)
+            # all_predictions.append(mean)
             all_deepFMpredictions.append(pred_values)
             all_labels.append(y_batch)
             all_variances.append(variance)
@@ -178,25 +165,25 @@ def validation(iterator, model, y_pred, last_layer_tensor, weights, d=128, runs=
             valid_runs += 1
 
             # Clean up intermediate variables
-            del H, y_batch, pred_values, mask, variance, y_batch_all_labels, metadata, mean
+            del H, y_batch, pred_values, mask, variance, y_batch_all_labels, metadata
 
         except tf.errors.OutOfRangeError:
             print(f"Iterator exhausted at run {i}")
             break
 
     if valid_runs == 0:
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None
 
     # Concatenate once at the end (more memory efficient)
-    predictions = np.concatenate(all_predictions, axis=0) 
+    # predictions = np.concatenate(all_predictions, axis=0) if all_predictions else np.array([])
     deepFMpredictions = np.concatenate(all_deepFMpredictions, axis=0)
-    labels = np.concatenate(all_labels, axis=0)
-    variances = np.concatenate(all_variances, axis=0) 
+    labels = np.concatenate(all_labels, axis=0) if all_labels else np.array([])
+    variances = np.concatenate(all_variances, axis=0) if all_variances else np.array([])
 
     # Clean up lists
-    del all_labels, all_variances, all_deepFMpredictions, all_predictions
+    del all_labels, all_variances, all_deepFMpredictions
 
-    return deepFMpredictions, labels, predictions, variances, all_content_ids, all_dw_p_ids, all_timestamps
+    return deepFMpredictions, labels, variances, all_content_ids, all_dw_p_ids, all_timestamps
 
 parser = argparse.ArgumentParser(description="TPFY Exploration offline Training.")
 parser.add_argument("model_name", type=str)
@@ -247,22 +234,12 @@ next_day = date_obj + timedelta(days=1)
 validation_date = next_day.strftime("%Y-%m-%d")
 validation_data_path = f's3://p13n-reco-offline-prod/upload_objects/test_vedansh/daily-mtl-extracted-cms3-minimum-5-contents/cd={validation_date}/'
 tf_dataset = create_dataset(args.date, validation_data_path)
-
+iterator = tf_dataset.make_one_shot_iterator()
+next_batch = iterator.get_next()
+sample_features, sample_labels, sample_metadata = session.run(next_batch)
 tpfy_model = load_and_compile_model()
 
-with tfv1.name_scope("linucb_training"):
-    iterator = tf_dataset.make_one_shot_iterator()
-    next_batch = iterator.get_next()
-
-    # Unpack - this creates tensor placeholders
-    if len(next_batch) == 3:
-        x, y_true, metadata = next_batch
-    else:
-        x, y_true = next_batch
-        metadata = None
-
-    y_pred = tpfy_model(x, training=False)
-
+prediction = tpfy_model(sample_features, training=False)
 session.run([
     tfv1.global_variables_initializer(),
     tfv1.local_variables_initializer(),
@@ -274,7 +251,7 @@ plain_weights = load_model_weights_from_s3(
     use_s3=True,
     checkpoint_name=args.checkpoint
 )
-plain_weights_modified = {k.replace('train/', 'linucb_training/'): v for k, v in plain_weights.items()}
+plain_weights_modified = {k.replace('train/', ''): v for k, v in plain_weights.items()}
 restore_ops = tpfy_model.restore_plain_weights_ops(
     plain_weights_modified,
     clear_nn=args.clear_nn
@@ -285,39 +262,30 @@ session.run(restore_ops)
 iterator = tf_dataset.make_one_shot_iterator()
 next_batch = iterator.get_next()
 
-# Getting the tensor for the specified layer's activations to be used as features for LinUCB
-    # Here, extracting the output Relu(SparseFeaturesOutput + DenseFeaturesOutput). This is given to Linear layer(d, 2) to predict click and watch logits.
-graph = tfv1.get_default_graph()
-compress_output_tensor = graph.get_tensor_by_name(
-    f'linucb_training/tpfy_model_v3/deepfm/{args.layer_name}:0'
-)
+# Get compress_output tensor (linear_input)
+graph = tf.compat.v1.get_default_graph()
+compress_output_tensor = graph.get_tensor_by_name(f'tpfy_model_v3/deepfm/{args.layer_name}:0')
 
 lambda_=1.0
 d=128
-# A = np.load(f'progressive_matrices/{args.matrix_strategy}/A_{args.date}.npy')
-A = np.load(f'export/neural_linUCB_offline_matrices_2026-02-09/A.npy')
-b = np.load(f'export/neural_linUCB_offline_matrices_2026-02-09/b.npy')
+A = np.load(f'progressive_matrices/{args.matrix_strategy}/A_{args.date}.npy')
 # b = np.zeros((d, 1), dtype=np.float64)
 A_inv = np.linalg.inv(A)
-theta = A_inv @ b
 # run = 0
 steps = 100
 
-# os.makedirs(f'progressive_matrices/{args.matrix_strategy}/validation_dumping_dict_{args.date}', exist_ok=True)
-base_path = f'corrected_validation//validation_dumping_dict_{args.date}'
-os.makedirs(base_path, exist_ok=True)
-
-for run in range(0, args.validation_run, steps):
+os.makedirs(f'progressive_matrices/{args.matrix_strategy}/validation_dumping_dict_{args.date}', exist_ok=True)
+for run in range(0, args.validation_run, 100):
     start = time.time()
     # Find the validation evals for 10 runs
-    val_results = validation(next_batch, tpfy_model, y_pred, compress_output_tensor, plain_weights_modified, runs=steps)
+    val_results = validation(next_batch, tpfy_model, compress_output_tensor, runs=steps)
 
     if val_results[0] is None:
         print(f"Validation failed at run {run}, skipping metrics")
-        run += steps
+        run += 100
         continue
 
-    deepFMpredictions, labels, means, variances, content_ids, dw_p_ids, timestamps = val_results
+    deepFMpredictions, labels, variances, content_ids, dw_p_ids, timestamps = val_results
 
     # Save results
     dumping_dict = {
@@ -326,15 +294,14 @@ for run in range(0, args.validation_run, steps):
         'content_ids': content_ids,
         'deepFMpredictions': deepFMpredictions.flatten(),
         'labels': labels.flatten(),
-        'variances': variances,
-        'means': means,
+        'variances': variances
     }
 
-    with open(f'{base_path}/validation_stats_run_{run}.pkl', 'wb') as handle:
+    with open(f'progressive_matrices/{args.matrix_strategy}/validation_dumping_dict_{args.date}/validation_stats_run_{run}.pkl', 'wb') as handle:
         pickle.dump(dumping_dict, handle)
 
     # Clean up large objects explicitly
-    del labels, variances, content_ids, deepFMpredictions, dw_p_ids, timestamps, val_results, means
+    del labels, variances, content_ids, deepFMpredictions, dw_p_ids, timestamps, val_results
 
     # Force garbage collection and clear TF cache
     gc.collect()
