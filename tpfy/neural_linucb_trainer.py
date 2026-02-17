@@ -181,8 +181,10 @@ def run(args, session, hparams):
     d = hparams.model.middle_dim
     lambda_ = args.lambda_reg
         
-    s3_base_path = S3_TPFY_NEURAL_LINUCB_MODEL_EXPORT
-    # s3_base_path = 's3://p13n-reco-offline-prod/upload_objects/test_vedansh'
+    # s3_base_path = S3_TPFY_NEURAL_LINUCB_MODEL_EXPORT
+    s3_base_path = 's3://p13n-reco-offline-prod/upload_objects/test_vedansh'
+    base_path = f'export/neural_linUCB_offline_matrices_{args.date}'
+    os.makedirs(base_path, exist_ok=True)
     
     # Load or initialize matrices
     if args.reset_matrix:
@@ -198,6 +200,9 @@ def run(args, session, hparams):
     run_ = 0
     while True:
         if (run_ % args.logging_steps == 0) and (run_):
+            np.save(f'{base_path}/A.npy', A)
+            np.save(f'{base_path}/b.npy', b)
+            np.save(f'{base_path}/A_inv.npy', np.linalg.inv(A))
             # Upload entire folder to S3 if enabled
             if args.upload:
                 save_matrices_to_s3(f"{s3_base_path}/{args.date}", A, b)
@@ -216,6 +221,9 @@ def run(args, session, hparams):
         run_ += 1
 
     # Final save
+    np.save(f'{base_path}/A.npy', A)
+    np.save(f'{base_path}/b.npy', b)
+    np.save(f'{base_path}/A_inv.npy', np.linalg.inv(A))
     if args.upload:
         save_matrices_to_s3(f"{s3_base_path}/{args.date}", A, b)
         save_matrices_to_s3(f"{s3_base_path}/latest_matrices", A, b)
