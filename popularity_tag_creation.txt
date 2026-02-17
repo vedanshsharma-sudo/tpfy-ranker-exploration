@@ -1,0 +1,111 @@
+--Popularity tag creation
+-- Popularity tag creation is done on previous week of analysis week. If Anlysis is on 1st Feb
+-- week_start - 26 jan to 1st feb
+-- target week - 2 feb to 8th feb
+
+
+
+-- Create a new temporary table first
+CREATE TABLE content_watch_experience_analytics_scratch.rec_sys_review_jan26_subtitle_popularity_stg_vedansh
+LIKE content_watch_experience_analytics_scratch.rec_sys_review_nov26_subtitle_popularity_stg
+
+
+
+-- Populaating the popularity tag (use previous week dates)
+insert into content_watch_experience_analytics_scratch.rec_sys_review_jan26_subtitle_popularity_stg_vedansh
+with 
+base as (
+  select fromdate
+        , show_content_id 
+  from  
+  (
+     select *,
+           row_number() over(partition by show_content_id order by fromdate) as rnk1
+     from
+     (  
+        select 
+            show_content_id ,
+            date(fromdate) as fromdate
+        from premium.pay_content_etl_string_v2 b 
+        where date(fromdate) <= date('2026-02-01')
+        
+          and upper(trim(sub_type)) in ('MOVIE','EPISODE')
+          and clip_status = '10' -- active titles
+          and (show_content_id is not NULL and show_content_id != '')
+          and (trim(title) is not NULL and lower(trim(title)) 
+          not in ('test', 'not to use','SG_TEST4','Test Multiplex','KH Test','HES_Test_Movie_01_23Nov2020','DONOT USE','SG_TEST2','DO NOT USE'))
+          and trailer_flag = '0'
+        group by all
+     ) as a
+  ) as b
+  where rnk1 = 1
+  group by all
+)
+,wv_base as
+(select 
+coalesce(w.sub_title_id,'overall') as sub_title_id, count(distinct dw_p_id) all_vv--, count(distinct case when referrer_page_type = 'home' then dw_p_id else null end) hp_vv, count(distinct case when referrer_page_type = 'home' and referrer_widget_category not in ('continue watching') then dw_p_id else null end) hp_nocw_vv
+ from datapro.rec_sys_reporting_wv_base_table w  
+ inner join base b on w.cd between date'2026-01-26' and date'2026-02-01' and w.proposition_category != 'sports' and w.sub_title_id = b.show_content_id
+ where cd between date'2026-01-26' and date'2026-02-01' and w.proposition_category != 'sports'
+ and wt_mins > 0
+group by 
+grouping sets ((sub_title_id),())
+ )
+
+ ,ov_base as (
+  select all_vv as platform_vv from wv_base where sub_title_id = 'overall'
+ )
+
+ ,req as (select sub_title_id, all_vv, platform_vv,  all_vv*100.0/platform_vv as vv_share
+ from wv_base w 
+ left join ov_base o on 1=1
+ where sub_title_id != 'overall'
+ order by 2 desc)
+
+select sub_title_id, all_vv, platform_vv, vv_share, date'2026-01-26' as week_start_date, date'2026-02-01' as week_end_date, date'2026-01-26'+7 as target_week_start_date, date'2026-02-01'+7 as target_week_end_date,
+case 
+  when vv_share >= 1 then 'High'
+  when vv_share < 1 and vv_share >= 0.1  then 'Medium' 
+  when vv_share <0.1 and vv_share >= 0.01 then 'Low'
+  when vv_share <0.01 then 'Negligible'
+ end as popularity_tag
+from req;
+
+
+
+
+
+-- Populating of New releases tag is done on current week of analysis
+elect 'Current Week New Releases' as new_tag
+        , show_content_id 
+  from  
+  (
+     select *,
+           row_number() over(partition by show_content_id order by fromdate) as rnk1
+     from
+     (  
+        select 
+            show_content_id ,
+            date(fromdate) as fromdate
+        from premium.pay_content_etl_string_v2 b 
+        where date(fromdate) between date('2026-02-02') and date('2026-02-08') -- target dates
+        
+          and upper(trim(sub_type)) in ('MOVIE','EPISODE')
+          and clip_status = '10' -- active titles
+          and (show_content_id is not NULL and show_content_id != '')
+          and (trim(title) is not NULL and lower(trim(title)) 
+          not in ('test', 'not to use','SG_TEST4','Test Multiplex','KH Test','HES_Test_Movie_01_23Nov2020','DONOT USE','SG_TEST2','DO NOT USE'))
+          and trailer_flag = '0'
+        group by all
+     ) as a
+  ) as b
+  where rnk1 = 1
+  group by all 
+
+with   
+pop_base as (
+select target_week_end_date, popularity_tag, sub_title_id as pop_sub_title_id from content_watch_experience_analytics_scratch.rec_sys_review_nov26_subtitle_popularity_stg 
+group by all
+)
+
+--- if a content is both new release and Low / Medium / High, preference needs to be given to Low / Medium / High
