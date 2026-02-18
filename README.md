@@ -1,5 +1,8 @@
 # tpfy-ranker-exploration
 
+## Matrices on s3 to be consumed on serving side everyday - 
+s3://p13n-reco-offline-models-prod/models/tpfy/tpfy-v3-neural-linucb/latest_matrices/
+
 ## Connect with the EC2 instance - 
 ssh box2-prod-sg (Follow this document for setting it up - https://docs.google.com/document/d/1JIKqyGR93y4HuLvBuWkoRgHn-CXI1CLIA4mbvUj0Vgg/edit?tab=t.0)
 
